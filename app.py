@@ -1,0 +1,1 @@
+print("Welcome to the MAD1 Bootcamp!")
