@@ -7,6 +7,11 @@ from datetime import datetime, date
 
 from .models import *
 
+import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+matplotlib.use('Agg')
+
 
 def calculate_campaign_progress(start_date, end_date):
     current_date = date.today()
@@ -17,6 +22,11 @@ def calculate_campaign_progress(start_date, end_date):
     else:
         progress = 0
     return round(progress, 2)
+
+
+def campaign_isactive(start_date, end_date):
+    present_date = date.today()
+    return start_date <= present_date <= end_date
 
 #HOME ROUTE
 @app.route('/')
@@ -98,7 +108,21 @@ def sponsorlogin():
                     else:
                         this_sponsor = sponsor
                         login_user(sponsor)
-                        return render_template('sponsor_dashboard.html', current_user=sponsor, u_name=u_name)
+                        adrequests = db.session.query(Adrequests).join(Campaign).join(Influencer).filter(
+                            Campaign.sponsor_id == sponsor.sponsor_id,
+                            Campaign.flagged == 0,
+                            Influencer.flagged == 0,
+                            Adrequests.status.in_(["Requested to Sponsor", "Accepted by Sponsor"])
+                        ).all()
+
+                        campaigns = Campaign.query.filter_by(sponsor_id = sponsor.sponsor_id, flagged = 0).all()
+
+                        active_campaigns = []
+
+                        for campaign in campaigns:
+                            if(campaign_isactive(campaign.start_date, campaign.end_date, date.today())):
+                                active_campaigns.append(campaign)
+                        return render_template('sponsor_dashboard.html', current_user=sponsor, u_name=u_name, adrequests=adrequests, active_campaigns=active_campaigns, calculate_campaign_progress=calculate_campaign_progress)
     return render_template('sponsor_login.html')
 
 
@@ -126,10 +150,10 @@ def create_campaign():
         edate = request.form.get('edate')
         edate = datetime.strptime(edate, '%Y-%m-%d').date()
         current_date = date.today()
-        if edate < sdate:
-            return render_template('create_campaign.html', error="End date must be after start date")
-        if sdate < current_date:
-            return render_template('create_campaign.html', error="Start date must be today or later")
+        # if edate < sdate:
+        #     return render_template('create_campaign.html', error="End date must be after start date")
+        # if sdate < current_date:
+        #     return render_template('create_campaign.html', error="Start date must be today or later")
         
         visibility = request.form.get('visibility')
         goals = request.form.get('goals')
@@ -217,3 +241,79 @@ def sponsor_campaign():
     sponsor = Sponsor.query.filter_by(sponsor_id=this_id).first()
     campaigns = Campaign.query.filter_by(sponsor_id = current_user.id, flagged=0).all()
     return render_template('sponsor_campaign.html', campaigns=campaigns, sponsor=sponsor, calculate_campaign_progress=calculate_campaign_progress)
+
+
+#SPONSOR DASHBOARD ROUTE
+@app.route('/sponsor_dash', methods=['GET', 'POST'])
+@login_required
+def sponsor_dash():
+    user_id = current_user.id
+    user = User.query.filter_by(id=user_id).first()
+    sponsor = Sponsor.query.filter_by(sponsor_id=user.id).first()
+
+    adrequests = db.session.query(Adrequests).join(Campaign).join(Influencer).filter(
+        Campaign.sponsor_id == current_user.id,
+        Campaign.flagged == 0,
+        Influencer.flagged == 0,
+        Adrequests.status.in_(["Requested to Sponsor", "Accepted by Sponsor"])
+    ).all()
+
+    campaigns = Campaign.query.filter_by(sponsor_id=current_user.id, flagged=0).all()
+
+    active_campaigns = []
+
+    for campaign in campaigns:
+        if campaign_isactive(campaign.start_date, campaign.end_date):     
+            active_campaigns.append(campaign)
+    return render_template('sponsor_dashboard.html', current_user=sponsor, adrequests=adrequests, active_campaigns=active_campaigns, calculate_campaign_progress=calculate_campaign_progress)
+
+#SPONSOR LOGOUT
+@app.route('/sponsor_logout')
+@login_required
+def sponsor_logout():
+    logout_user()
+    return render_template('sponsor_login.html')
+
+#INFLUENCER SEARCH CAMPAIGN ROUTE
+@app.route('/search_campaign', methods=['GET', 'POST'])
+@login_required
+def search_campaign():
+    search_query = request.form.get('search_query')
+    campaigns = []
+    campaigns = Campaign.query.filter(
+        (Campaign.name.ilike(f'%{search_query}%')) |
+        (Campaign.description.ilike(f'%{search_query}%')) |
+        (Campaign.niche.ilike(f'%{search_query}%')),
+        Campaign.flagged != 1,
+        Campaign.visibility != 'Private',
+    ).all()
+    return render_template('search_campaign.html', campaigns=campaigns, search_query=search_query)
+
+
+@app.route('/admin_stats', methods=['GET', 'POST'])
+@login_required
+def admin_stats():
+    sponsor = Sponsor.query.all()
+    influencer = Influencer.query.all()
+    campaign = Campaign.query.all()
+    adrequests = Adrequests.query.all()
+
+    num_sponsors = len(sponsor)
+    num_influencers = len(influencer)
+    num_campaigns = len(campaign)
+    num_adrequests = len(adrequests)
+
+    plt.clf()
+    categories = ['Sponsors', 'Influencers', 'Campaigns', 'Ad Requests']
+    counts = [num_sponsors, num_influencers, num_campaigns, num_adrequests]
+
+    plt.bar(categories, counts, color=['blue', 'orange', 'green', 'red'])
+    plt.xlabel('Categories')
+    plt.ylabel('Counts')
+    plt.title('Platform Statistics Overview')
+    ax = plt.gca()
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    plt.xticks(ticks=range(len(categories)), labels=categories)
+    plt.savefig('static/admin_stats.png')
+    return render_template('admin_stats.html')
+

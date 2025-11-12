@@ -1,0 +1,11 @@
+python -m venv venv
+
+source venv/bin/activate (for MAC OS)
+
+pip install -r requirements.txt
+
+python app.py 
+
+
+
+pip freeze>requirements.txt
